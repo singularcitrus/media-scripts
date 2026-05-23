@@ -276,6 +276,11 @@ while IFS= read -r -d '' season_dir; do
       log_info "Space saved: $(numfmt --to=iec --suffix=B "$saved_bytes") (${saved_pct}%)"
 
       log_ok "${GREEN}Encoded successfully${RESET}"
+
+      mkvpropedit "$out_file" \
+        --edit info \
+        --set "comment=Encoded by singularcitrus/encode_show v1.0"
+
       ((success++)) || true
     else
       log_fail "${RED}Encoding failed${RESET} — ${DIM}see encode.log for details${RESET}"
