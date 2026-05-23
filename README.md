@@ -26,10 +26,10 @@ _There are others, but they are quick utility scripts that happened to be in the
   - `awk`
   - `tput`
 
-On Debian/Ubuntu-based systems, HandBrakeCLI can usually be installed with:
+On Debian/Ubuntu-based systems, the non-default dependencies can be installed with:
 
 ```bash
-sudo apt install handbrake-cli
+sudo apt install handbrake-cli mkvtoolnix
 ```
 
 The scripts are written with Linux in mind. They may need small changes on macOS because BSD `stat` and GNU `stat` enjoy being pointlessly different, as is tradition.
