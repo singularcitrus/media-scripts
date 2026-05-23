@@ -1,0 +1,517 @@
+#!/usr/bin/env bash
+
+# ─────────────────────────────────────────────────────────────
+# tv_compression_stats.sh
+# Visualize space savings between an original and compressed
+# TV-show folder tree. Read-only — never modifies any files.
+# Usage: ./tv_compression_stats.sh [--csv <file>] <original_show_dir> <compressed_show_dir>
+#        ./tv_compression_stats.sh --from-csv <file>
+# ─────────────────────────────────────────────────────────────
+
+set -euo pipefail
+
+# ── Colours ──────────────────────────────────────────────────
+RED=$'\e[0;31m'
+GREEN=$'\e[0;32m'
+YELLOW=$'\e[0;33m'
+CYAN=$'\e[0;36m'
+BOLD=$'\e[1m'
+DIM=$'\e[2m'
+RESET=$'\e[0m'
+
+# ── Helpers ───────────────────────────────────────────────────
+usage() {
+    echo "Usage: $(basename "$0") [--csv <file>] <original_show_dir> <compressed_show_dir>"
+    echo "       $(basename "$0") --from-csv <file>"
+    exit 1
+}
+
+human_bytes() {
+    local bytes=$1
+    [[ "$bytes" =~ ^-?[0-9]+$ ]] || { printf '?'; return; }
+    if   (( bytes >= 1073741824 )); then printf "%.2f GB" "$(echo "scale=2; $bytes/1073741824" | bc)"
+    elif (( bytes >= 1048576    )); then printf "%.2f MB" "$(echo "scale=2; $bytes/1048576"    | bc)"
+    elif (( bytes >= 1024       )); then printf "%.2f KB" "$(echo "scale=2; $bytes/1024"       | bc)"
+    else printf "%d B" "$bytes"
+    fi
+}
+
+file_bytes() { stat -c%s "$1" 2>/dev/null || stat -f%z "$1" 2>/dev/null || echo 0; }
+
+# Print a single file row immediately
+print_file_row() {
+    local type="$1" fn="$2" ext_note="$3" orig_h="$4" comp_h="$5" diff="$6"
+    if [[ "$type" == ok ]]; then
+        printf "    ${GREEN}✔${RESET} %s%s  ${DIM}%9s → %9s${RESET}  %s\n" \
+            "$fn" "$ext_note" "$orig_h" "$comp_h" "$diff"
+    else
+        printf "    ${RED}✘${RESET} %s  ${DIM}%9s${RESET}\n" "$fn" "$orig_h"
+    fi
+}
+
+# Print a season summary table from the _s_* arrays
+print_season_table() {
+    local n=${#_s_names[@]}
+    (( n == 0 )) && return
+
+    local W_NAME=20 W_FILES=7 W_ORIG=11 W_SIZE=15 W_SAVED=18
+
+    local hn; hn=$(printf "%$(( W_NAME  + 2 ))s" | tr ' ' '─')
+    local hf; hf=$(printf "%$(( W_FILES + 2 ))s" | tr ' ' '─')
+    local ho; ho=$(printf "%$(( W_ORIG  + 2 ))s" | tr ' ' '─')
+    local hs; hs=$(printf "%$(( W_SIZE  + 2 ))s" | tr ' ' '─')
+    local hv; hv=$(printf "%$(( W_SAVED + 2 ))s" | tr ' ' '─')
+
+    echo
+    echo -e "  ${DIM}┌${hn}┬${hf}┬${ho}┬${hs}┬${hv}┐${RESET}"
+    printf "  ${DIM}│${RESET} %-${W_NAME}s ${DIM}│${RESET} %${W_FILES}s ${DIM}│${RESET} %${W_ORIG}s ${DIM}│${RESET} %-${W_SIZE}s ${DIM}│${RESET} %-${W_SAVED}s ${DIM}│${RESET}\n" \
+        "Season" "Files" "Original" "Size" "Saved"
+    echo -e "  ${DIM}├${hn}┼${hf}┼${ho}┼${hs}┼${hv}┤${RESET}"
+
+    local i
+    for (( i=0; i<n; i++ )); do
+        local name="${_s_names[$i]}"
+        local s_orig="${_s_orig[$i]}"
+        local s_orig_comp="${_s_orig_comp[$i]}"
+        local s_comp="${_s_comp[$i]}"
+        local s_remaining="${_s_remaining[$i]}"
+        local s_files="${_s_files[$i]}"
+        local s_compressed="${_s_compressed[$i]}"
+
+        local not_done=$(( s_files - s_compressed ))
+        local files_str="${s_compressed}/${s_files}"
+        local size_col saved_col
+
+        if (( s_compressed == 0 )); then
+            size_col="${RED}none${RESET}"
+            saved_col="${DIM}—${RESET}"
+        else
+            local saved=$(( s_orig_comp - s_comp )) || true
+            local saved_h; saved_h=$(human_bytes "${saved#-}")
+
+            if (( not_done > 0 && s_orig_comp > 0 )); then
+                local proj_remaining; proj_remaining=$(echo "scale=0; $s_remaining * $s_comp / $s_orig_comp" | bc)
+                local proj_total=$(( s_comp + proj_remaining )) || true
+                size_col="${CYAN}~$(human_bytes "$proj_total") proj${RESET}"
+            else
+                size_col="${GREEN}$(human_bytes "$s_comp") final${RESET}"
+            fi
+
+            if (( saved > 0 )); then
+                local pct; pct=$(echo "scale=1; $saved * 100 / $s_orig_comp" | bc)
+                saved_col="${GREEN}-${saved_h} (${pct}%)${RESET}"
+            elif (( saved == 0 )); then
+                saved_col="${RED}no change${RESET}"
+            else
+                saved_col="${RED}+${saved_h} (LARGER)${RESET}"
+            fi
+        fi
+
+        printf "  ${DIM}│${RESET} %-${W_NAME}s ${DIM}│${RESET} %${W_FILES}s ${DIM}│${RESET} %${W_ORIG}s ${DIM}│${RESET} " \
+            "$name" "$files_str" "$(human_bytes "$s_orig")"
+        # pad ANSI-coloured fields by measuring their printable length
+        local size_plain saved_plain size_pad saved_pad
+        size_plain=$(printf '%s' "$size_col" | sed $'s/\x1b\\[[0-9;]*m//g')
+        saved_plain=$(printf '%s' "$saved_col" | sed $'s/\x1b\\[[0-9;]*m//g')
+        size_pad=$(( W_SIZE  - ${#size_plain}  )); (( size_pad  < 0 )) && size_pad=0
+        saved_pad=$(( W_SAVED - ${#saved_plain} )); (( saved_pad < 0 )) && saved_pad=0
+        printf '%s%*s' "$size_col"  "$size_pad"  ""
+        printf " ${DIM}│${RESET} "
+        printf '%s%*s' "$saved_col" "$saved_pad" ""
+        printf " ${DIM}│${RESET}\n"
+    done
+
+    echo -e "  ${DIM}└${hn}┴${hf}┴${ho}┴${hs}┴${hv}┘${RESET}"
+    echo
+}
+
+# ── Argument parsing ─────────────────────────────────────────
+CSV_FILE=""
+FROM_CSV=""
+
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --csv)
+            [[ -n "${2-}" ]] || { echo "Error: --csv requires a filename."; exit 1; }
+            CSV_FILE="$2"; shift 2 ;;
+        --from-csv)
+            [[ -n "${2-}" ]] || { echo "Error: --from-csv requires a filename."; exit 1; }
+            FROM_CSV="$2"; shift 2 ;;
+        --) shift; break ;;
+        -*) echo "Unknown option: $1"; usage ;;
+        *)  break ;;
+    esac
+done
+
+if [[ -n "$FROM_CSV" ]]; then
+    [[ $# -ne 0 ]] && { echo "Error: --from-csv takes no positional arguments."; usage; }
+    [[ -f "$FROM_CSV" ]] || { echo "Error: CSV file '$FROM_CSV' not found."; exit 1; }
+    ORIG_DIR=""; COMP_DIR=""
+else
+    [[ $# -ne 2 ]] && usage
+    ORIG_DIR="${1%/}"
+    COMP_DIR="${2%/}"
+    [[ -d "$ORIG_DIR" ]] || { echo "Error: original directory '$ORIG_DIR' not found."; exit 1; }
+    [[ -d "$COMP_DIR" ]] || { echo "Error: compressed directory '$COMP_DIR' not found."; exit 1; }
+fi
+
+# ── CSV setup ────────────────────────────────────────────────
+if [[ -n "$CSV_FILE" && -z "$FROM_CSV" ]]; then
+    printf 'Season,Filename,Original Ext,Compressed Ext,Original Bytes,Compressed Bytes,Saved Bytes,Saved Pct,Status\n' \
+        > "$CSV_FILE" || { echo "Error: cannot write to '$CSV_FILE'"; exit 1; }
+fi
+
+# ── Accumulators ─────────────────────────────────────────────
+total_orig_bytes=0
+total_comp_bytes=0
+total_orig_comp_bytes=0
+total_orig_remaining=0
+total_files=0
+total_compressed=0
+
+season_orig_bytes=0
+season_comp_bytes=0
+season_orig_comp_bytes=0
+season_orig_remaining=0
+season_files=0
+season_compressed=0
+
+_s_names=()
+_s_orig=()
+_s_orig_comp=()
+_s_comp=()
+_s_remaining=()
+_s_files=()
+_s_compressed=()
+
+# ── run_from_csv: replay a saved CSV through the same render pipeline ───────
+run_from_csv() {
+    local csv="$1"
+    local current_season=""
+    local first_line=1
+
+    while IFS= read -r line; do
+        # skip header row
+        if (( first_line )); then first_line=0; continue; fi
+        # strip Windows-style CR if present
+        line="${line%%$'\r'}"
+        [[ -z "$line" ]] && continue
+
+        # Parse CSV row respecting quoted fields that may contain commas.
+        # awk outputs one field per line; read assigns them individually so
+        # empty fields are never collapsed by bash's IFS-whitespace rules.
+        {
+            IFS= read -r f_season
+            IFS= read -r f_filename
+            IFS= read -r f_orig_ext
+            IFS= read -r f_comp_ext
+            IFS= read -r f_orig_bytes
+            IFS= read -r f_comp_bytes
+            IFS= read -r f_saved_bytes
+            IFS= read -r f_saved_pct
+            IFS= read -r f_status
+        } < <(awk '
+        {
+            s = $0
+            while (length(s) > 0) {
+                if (substr(s,1,1) == "\"") {
+                    field = ""; s = substr(s,2)
+                    while (length(s) > 0) {
+                        if (substr(s,1,1) == "\"") {
+                            s = substr(s,2)
+                            if (substr(s,1,1) == "\"") { field = field "\""; s = substr(s,2) }
+                            else break
+                        } else { field = field substr(s,1,1); s = substr(s,2) }
+                    }
+                    if (length(s) > 0 && substr(s,1,1) == ",") s = substr(s,2)
+                } else {
+                    idx = index(s, ",")
+                    if (idx == 0) { field = s; s = "" }
+                    else { field = substr(s,1,idx-1); s = substr(s,idx+1) }
+                }
+                print field
+            }
+        }' <<< "$line")
+        # default empty numerics to 0, then enforce integer-only
+        f_orig_bytes="${f_orig_bytes:-0}"
+        f_comp_bytes="${f_comp_bytes:-0}"
+        f_saved_bytes="${f_saved_bytes:-0}"
+        f_saved_pct="${f_saved_pct:-0}"
+        [[ "$f_orig_bytes"  =~ ^-?[0-9]+$ ]] || f_orig_bytes=0
+        [[ "$f_comp_bytes"  =~ ^-?[0-9]+$ ]] || f_comp_bytes=0
+        [[ "$f_saved_bytes" =~ ^-?[0-9]+$ ]] || f_saved_bytes=0
+        [[ "$f_saved_pct"   =~ ^-?[0-9]+(\.([0-9]+))?$ ]] || f_saved_pct=0
+
+        # ── Season transition ────────────────────────────────
+        if [[ "$f_season" != "$current_season" ]]; then
+            if [[ -n "$current_season" ]]; then
+                _s_names+=("$current_season")
+                _s_orig+=("$season_orig_bytes")
+                _s_orig_comp+=("$season_orig_comp_bytes")
+                _s_comp+=("$season_comp_bytes")
+                _s_remaining+=("$season_orig_remaining")
+                _s_files+=("$season_files")
+                _s_compressed+=("$season_compressed")
+                echo
+            fi
+            current_season="$f_season"
+            season_orig_bytes=0; season_comp_bytes=0; season_orig_comp_bytes=0
+            season_orig_remaining=0; season_files=0; season_compressed=0
+            echo "  ${BOLD}${YELLOW}📁  $f_season${RESET}"
+        fi
+
+        local orig_human; orig_human=$(human_bytes "$f_orig_bytes")
+        (( total_orig_bytes  += f_orig_bytes )) || true
+        (( season_orig_bytes += f_orig_bytes )) || true
+        (( total_files++  )) || true
+        (( season_files++ )) || true
+
+        if [[ "$f_status" == "ok" ]]; then
+            (( total_compressed++  )) || true
+            (( season_compressed++ )) || true
+            (( total_orig_comp_bytes  += f_orig_bytes )) || true
+            (( season_orig_comp_bytes += f_orig_bytes )) || true
+            (( total_comp_bytes  += f_comp_bytes )) || true
+            (( season_comp_bytes += f_comp_bytes )) || true
+
+            local comp_human; comp_human=$(human_bytes "$f_comp_bytes")
+            local diff_str
+            if (( f_saved_bytes > 0 )); then
+                local saved_human; saved_human=$(human_bytes "$f_saved_bytes")
+                diff_str="${GREEN}-${saved_human} (${f_saved_pct}%)${RESET}"
+            elif (( f_saved_bytes == 0 )); then
+                diff_str="${RED}no change${RESET}"
+            else
+                local bigger; bigger=$(human_bytes $(( -f_saved_bytes )))
+                diff_str="${RED}+${bigger} (LARGER!)${RESET}"
+            fi
+
+            local ext_note=""
+            if [[ -n "$f_comp_ext" && "$f_comp_ext" != "$f_orig_ext" ]]; then
+                ext_note=" ${DIM}.${f_orig_ext} → .${f_comp_ext}${RESET}"
+            fi
+
+            print_file_row ok "$f_filename" "$ext_note" "$orig_human" "$comp_human" "$diff_str"
+        else
+            (( total_orig_remaining  += f_orig_bytes )) || true
+            (( season_orig_remaining += f_orig_bytes )) || true
+            print_file_row missing "$f_filename" "" "$orig_human" "" ""
+        fi
+    done < "$csv"
+
+    # flush the last season
+    if [[ -n "$current_season" ]]; then
+        _s_names+=("$current_season")
+        _s_orig+=("$season_orig_bytes")
+        _s_orig_comp+=("$season_orig_comp_bytes")
+        _s_comp+=("$season_comp_bytes")
+        _s_remaining+=("$season_orig_remaining")
+        _s_files+=("$season_files")
+        _s_compressed+=("$season_compressed")
+    fi
+}
+
+# ── Header ────────────────────────────────────────────────────
+if [[ -n "$FROM_CSV" ]]; then
+    show_name=$(basename "$FROM_CSV" .csv)
+    echo
+    echo "${BOLD}${CYAN}TV Compression Report${RESET}"
+    echo "${BOLD}📺  ${show_name}${RESET}"
+    echo "${DIM}Source CSV: $FROM_CSV${RESET}"
+    echo
+else
+    show_name=$(basename "$ORIG_DIR")
+    echo
+    echo "${BOLD}${CYAN}TV Compression Report${RESET}"
+    echo "${BOLD}📺  ${show_name}${RESET}"
+    echo "${DIM}Original  : $ORIG_DIR${RESET}"
+    echo "${DIM}Compressed: $COMP_DIR${RESET}"
+    echo
+fi
+
+if [[ -n "$FROM_CSV" ]]; then
+    run_from_csv "$FROM_CSV"
+else
+
+# ── Tree walk ─────────────────────────────────────────────────
+current_season=""
+
+while IFS= read -r orig_file; do
+    rel="${orig_file#"$ORIG_DIR"/}"
+
+    season="${rel%%/*}"
+    filename="${rel##*/}"
+    [[ -z "$season" || -z "$filename" || "$season" == "$filename" ]] && continue
+
+    # ── Skip non-video files ──────────────────────────────────
+    ext="${filename##*.}"
+    [[ "$ext" == "mp4" || "$ext" == "mkv" ]] || continue
+
+    # ── Season transition ─────────────────────────────────────
+    if [[ "$season" != "$current_season" ]]; then
+        if [[ -n "$current_season" ]]; then
+            _s_names+=("$current_season")
+            _s_orig+=("$season_orig_bytes")
+            _s_orig_comp+=("$season_orig_comp_bytes")
+            _s_comp+=("$season_comp_bytes")
+            _s_remaining+=("$season_orig_remaining")
+            _s_files+=("$season_files")
+            _s_compressed+=("$season_compressed")
+            echo
+        fi
+        current_season="$season"
+        season_orig_bytes=0; season_comp_bytes=0; season_orig_comp_bytes=0
+        season_orig_remaining=0; season_files=0; season_compressed=0
+        echo "  ${BOLD}${YELLOW}📁  $season${RESET}"
+    fi
+
+    orig_bytes=$(file_bytes "$orig_file")
+    orig_human=$(human_bytes "$orig_bytes")
+    (( total_orig_bytes   += orig_bytes )) || true
+    (( season_orig_bytes  += orig_bytes )) || true
+    (( total_files++  ))                   || true
+    (( season_files++ ))                   || true
+
+    stem="${filename%.*}"
+    comp_file=""
+    comp_season_dir="$COMP_DIR/$season"
+
+    if [[ -d "$comp_season_dir" ]]; then
+        if [[ -f "$comp_season_dir/$filename" ]]; then
+            comp_file="$comp_season_dir/$filename"
+        else
+            while IFS= read -r candidate; do
+                cand_stem="${candidate##*/}"; cand_stem="${cand_stem%.*}"
+                cand_ext="${candidate##*.}"
+                if [[ "$cand_stem" == "$stem" && ( "$cand_ext" == "mp4" || "$cand_ext" == "mkv" ) ]]; then
+                    comp_file="$candidate"
+                    break
+                fi
+            done < <(find "$comp_season_dir" -maxdepth 1 -type f | sort)
+        fi
+    fi
+
+    if [[ -n "$comp_file" ]]; then
+        (( total_compressed++  ))                      || true
+        (( season_compressed++ ))                      || true
+        (( total_orig_comp_bytes  += orig_bytes ))     || true
+        (( season_orig_comp_bytes += orig_bytes ))     || true
+        comp_bytes=$(file_bytes "$comp_file")
+        comp_human=$(human_bytes "$comp_bytes")
+        (( total_comp_bytes  += comp_bytes ))          || true
+        (( season_comp_bytes += comp_bytes ))          || true
+
+        saved_bytes=$(( orig_bytes - comp_bytes )) || true
+
+        if (( saved_bytes > 0 )); then
+            saved_human=$(human_bytes "$saved_bytes")
+            pct=$(echo "scale=1; $saved_bytes * 100 / $orig_bytes" | bc)
+            diff_str="${GREEN}-${saved_human} (${pct}%)${RESET}"
+        elif (( saved_bytes == 0 )); then
+            diff_str="${RED}no change${RESET}"
+        else
+            bigger=$(human_bytes $(( -saved_bytes )) )
+            diff_str="${RED}+${bigger} (LARGER!)${RESET}"
+        fi
+
+        comp_ext="${comp_file##*.}"
+        if [[ "$comp_ext" != "$ext" ]]; then
+            ext_note=" ${DIM}.${ext} → .${comp_ext}${RESET}"
+        else
+            ext_note=""
+        fi
+
+        print_file_row ok "$filename" "$ext_note" "$orig_human" "$comp_human" "$diff_str"
+
+        if [[ -n "$CSV_FILE" ]]; then
+            local_comp_ext="${comp_file##*.}"
+            local_saved_pct=0
+            (( orig_bytes > 0 )) && \
+                local_saved_pct=$(awk "BEGIN{printf \"%.1f\", ($saved_bytes)*100/$orig_bytes}")
+            printf '"%s","%s","%s","%s",%d,%d,%d,%s,ok\n' \
+                "$season" "$filename" "$ext" "$local_comp_ext" \
+                "$orig_bytes" "$comp_bytes" "$saved_bytes" "$local_saved_pct" \
+                >> "$CSV_FILE"
+        fi
+    else
+        (( total_orig_remaining  += orig_bytes )) || true
+        (( season_orig_remaining += orig_bytes )) || true
+        print_file_row missing "$filename" "" "$orig_human" "" ""
+
+        if [[ -n "$CSV_FILE" ]]; then
+            printf '"%s","%s","%s","",%d,"",,"",missing\n' \
+                "$season" "$filename" "$ext" "$orig_bytes" \
+                >> "$CSV_FILE"
+        fi
+    fi
+
+done < <(find "$ORIG_DIR" -mindepth 2 -maxdepth 2 -type f | sort)
+
+# Flush the last season
+if [[ -n "$current_season" ]]; then
+    _s_names+=("$current_season")
+    _s_orig+=("$season_orig_bytes")
+    _s_orig_comp+=("$season_orig_comp_bytes")
+    _s_comp+=("$season_comp_bytes")
+    _s_remaining+=("$season_orig_remaining")
+    _s_files+=("$season_files")
+    _s_compressed+=("$season_compressed")
+fi
+
+fi  # end of tree-walk else branch
+
+print_season_table
+
+# ── Summary ───────────────────────────────────────────────────
+not_compressed=$(( total_files - total_compressed ))
+
+echo
+echo "${BOLD}${CYAN}══════════════════════════════════════════${RESET}"
+echo "${BOLD}Summary${RESET}"
+echo "  Total files      : $total_files"
+echo "  Compressed       : ${GREEN}$total_compressed${RESET}"
+echo "  Not compressed   : ${RED}${not_compressed}${RESET}"
+echo
+
+echo "${BOLD}Space${RESET}"
+echo "  Total original size : $(human_bytes "$total_orig_bytes")"
+
+if (( total_compressed > 0 )); then
+    saved_so_far=$(( total_orig_comp_bytes - total_comp_bytes )) || true
+    if (( saved_so_far > 0 )); then
+        pct_done=$(echo "scale=1; $saved_so_far * 100 / $total_orig_comp_bytes" | bc)
+        echo -e "  Saved so far        : ${GREEN}$(human_bytes "$saved_so_far") (${pct_done}% on compressed files)${RESET}"
+    elif (( saved_so_far == 0 )); then
+        echo -e "  Saved so far        : ${RED}no change${RESET}"
+    else
+        echo -e "  Saved so far        : ${RED}+$(human_bytes $(( -saved_so_far ))) (net LARGER)${RESET}"
+    fi
+else
+    echo -e "  Saved so far        : ${DIM}—${RESET}"
+fi
+
+if (( not_compressed > 0 )); then
+    echo -e "  Still remaining     : ${RED}$(human_bytes "$total_orig_remaining") across ${not_compressed} file(s)${RESET}"
+fi
+
+if (( total_compressed > 0 && total_orig_remaining > 0 )); then
+    saved_so_far=$(( total_orig_comp_bytes - total_comp_bytes )) || true
+    if (( saved_so_far > 0 )); then
+        projected_remaining=$(echo "scale=0; $total_orig_remaining * $total_comp_bytes / $total_orig_comp_bytes" | bc)
+        projected_saving=$(( total_orig_remaining - projected_remaining )) || true
+        total_projected=$(( saved_so_far + projected_saving ))             || true
+        pct_projected=$(echo "scale=1; $total_projected * 100 / $total_orig_bytes" | bc)
+        projected_total_size=$(( total_comp_bytes + projected_remaining )) || true
+        echo -e "  Projected saving    : ${CYAN}$(human_bytes "$total_projected") (${pct_projected}% of original) at current ratio${RESET}"
+        echo -e "  Projected total size: ${CYAN}$(human_bytes "$projected_total_size")${RESET}  ${DIM}(down from $(human_bytes "$total_orig_bytes"))${RESET}"
+    fi
+elif (( total_compressed > 0 && not_compressed == 0 )); then
+    echo -e "  Final total size    : ${GREEN}$(human_bytes "$total_comp_bytes")${RESET}  ${DIM}(down from $(human_bytes "$total_orig_bytes"))${RESET}"
+fi
+
+echo "${BOLD}${CYAN}══════════════════════════════════════════${RESET}"
+if [[ -n "$CSV_FILE" ]]; then
+    echo -e "  ${CYAN}CSV saved to: ${BOLD}${CSV_FILE}${RESET}"
+    echo
+fi
+echo

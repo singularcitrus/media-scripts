@@ -1,0 +1,8 @@
+#!/bin/bash
+for FILE in *.copy; do
+    echo "Processing file: $FILE"
+    # Insert your commands here to operate on the file
+
+    NEWFILE="${FILE/.copy/}"
+    mv -v $FILE $NEWFILE
+done

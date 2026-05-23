@@ -1,0 +1,57 @@
+#!/bin/bash
+
+# Colors
+BOLD="\033[1m"
+CYAN="\033[1;36m"
+GREEN="\033[1;32m"
+YELLOW="\033[1;33m"
+RED="\033[1;31m"
+DIM="\033[2m"
+RESET="\033[0m"
+
+# --- Argument validation ---
+if [[ $# -ne 2 ]]; then
+  echo -e "${RED}✗ Usage: $0 <original_folder> <new_folder>${RESET}"
+  exit 1
+fi
+
+ORIGINAL="${1%/}"
+NEW="${2%/}"
+
+if [[ ! -d "$ORIGINAL" ]]; then
+  echo -e "${RED}✗ Original folder not found: ${BOLD}$ORIGINAL${RESET}"
+  exit 1
+fi
+
+mkdir -p "$NEW"
+
+echo ""
+echo -e "${CYAN}${BOLD}📂 Mirroring subfolders${RESET}"
+echo -e "${DIM}   From : $ORIGINAL${RESET}"
+echo -e "${DIM}   Into : $NEW${RESET}"
+echo -e "${DIM}─────────────────────────────────────────${RESET}"
+
+count=0
+
+while IFS= read -r -d '' subfolder; do
+  relative="${subfolder:${#ORIGINAL}+1}"  # safe: slice by length, not glob
+  target="$NEW/$relative"
+
+  if [[ -d "$target" ]]; then
+    echo -e "  ${YELLOW}⚠ Already exists${RESET}  ${DIM}$relative${RESET}"
+  else
+    mkdir -p "$target"
+    echo -e "  ${GREEN}✔ Created${RESET}          ${BOLD}$relative${RESET}"
+    ((count++))
+  fi
+done < <(find "$ORIGINAL" -mindepth 1 -type d -print0 | sort -z)
+
+echo -e "${DIM}─────────────────────────────────────────${RESET}"
+
+if [[ $count -eq 0 ]]; then
+  echo -e "${YELLOW}  No new subfolders were created.${RESET}"
+else
+  echo -e "${GREEN}${BOLD}  ✔ Done! $count subfolder(s) created in: $NEW${RESET}"
+fi
+
+echo ""

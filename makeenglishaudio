@@ -1,0 +1,29 @@
+#!/bin/bash
+set -e
+for FOLDER in *; do
+echo "Processing folder: $FOLDER"
+for FILE in "$FOLDER"/*.mkv; do
+    echo "Checking file: $FILE"
+
+    # Get all audio track languages
+    AUDIO_LANGS=$(mkvmerge -J "$FILE" | jq -r '.tracks[] | select(.type == "audio") | .properties.language')
+
+    # Check if any non-English audio tracks exist
+    if ! echo "$AUDIO_LANGS" | grep -qv "^eng$"; then
+        echo "Skipping $FILE (only English audio tracks found)"
+        continue
+    fi
+
+    COPY="$FILE.copy"
+    mv "$FILE" "$FILE.copy"
+
+    echo "Processing $FILE"
+    mkvmerge -o "$FILE" \
+      --audio-tracks eng \
+      --subtitle-tracks eng \
+      "$COPY"
+
+    rm "$COPY"
+
+done
+done

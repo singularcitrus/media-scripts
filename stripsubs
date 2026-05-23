@@ -1,0 +1,25 @@
+#!/bin/bash
+set -e
+for FILE in **/*.mkv; do
+    echo "Processing file: $FILE"
+
+    # Check if any subtitle tracks exist
+    SUB_COUNT=$(mkvmerge -J "$FILE" | jq '[.tracks[] | select(.type == "subtitles")] | length')
+
+    if [ "$SUB_COUNT" -eq 0 ]; then
+        echo "Skipping $FILE (no embedded subtitles found)"
+        continue
+    fi
+
+    echo "Found $SUB_COUNT subtitle track(s), stripping..."
+
+    COPY="$FILE.copy"
+    mv "$FILE" "$COPY"
+
+    mkvmerge -o "$FILE" \
+      --no-subtitles \
+      "$COPY"
+
+    rm "$COPY"
+
+done

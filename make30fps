@@ -1,0 +1,10 @@
+#!/bin/bash
+for FILE in *.mp4; do
+    echo "Processing file: $FILE"
+    # Insert your commands here to operate on the file
+
+    COPY="$FILE.copy"
+    mv "$FILE" "$FILE.copy"
+    ffmpeg -hwaccel cuda -i "$COPY" -c:v h264_nvenc -vf "fps=30" "$FILE"
+
+done

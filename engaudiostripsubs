@@ -1,0 +1,17 @@
+#!/bin/bash
+set -e
+for FILE in *.mkv; do
+    echo "Processing file: $FILE"
+    # Insert your commands here to operate on the file
+
+    COPY="$FILE.copy"
+    mv "$FILE" "$FILE.copy"
+
+    mkvmerge -o "$FILE" \
+      --audio-tracks eng \
+      --no-subtitles \
+      "$COPY"
+
+    rm "$COPY"
+
+done
