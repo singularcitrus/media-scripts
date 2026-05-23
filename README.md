@@ -315,4 +315,4 @@ The scripts are useful, not magical. Bash is still Bash, which is basically a ha
 ## Use of AI
 Since I don't like it when developers don't declare their AI use, here goes:
 
-I used AI to help me in the development of these scripts, since bash is far from my strong suit. Rest assured, I've run these scripts in my own media environment and have trusted it with compressing my files and reporting back. I have also replaced some of my only copies of shows with the compressed version generated with my scripts.
+Yes, I used AI to help me in the development of these scripts, since bash is far from my strong suit. Rest assured, I've run these scripts in my own media environment and have trusted it with compressing my files and reporting back. I have also replaced some of my only copies of shows with the compressed version generated with my scripts.
