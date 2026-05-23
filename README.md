@@ -6,6 +6,7 @@ This repo contains two scripts:
 
 - `encode_folder` — recursively encodes video files from one folder tree into another, preserving the relative folder structure.
 - `compression_stats` — compares an original folder tree against a compressed folder tree and reports file-by-file, folder-level, and total savings.
+- `engaudiostripsubs`- remuxes MKV files in the current directory, keeping only English audio tracks and removing all subtitle tracks.
 
 _There are others, but they are quick utility scripts that happened to be in the same folder as the main 2, use at your own risk, and your mileage may vary. I am not going to document them unless they become proper tools_
 
@@ -16,6 +17,7 @@ _There are others, but they are quick utility scripts that happened to be in the
 - Linux (_or unix if you like to live on the edge, although it probably won't work right on unix_)
 - Bash
 - `HandBrakeCLI`
+- `mkvmerge` (MKVToolNix)
 - GNU/coreutils-style tools such as:
   - `find`
   - `sort`
@@ -271,6 +273,52 @@ Replay a saved CSV report:
 ```
 
 Useful if you want to view the report again without rescanning the folders.
+
+## engaudiostripsubs
+
+Remuxes all MKV files in the current directory, keeping only English audio tracks and removing all subtitle tracks.
+
+The original file is temporarily renamed during processing and replaced with the remuxed version.
+
+### Usage
+
+```bash
+cd /path/to/videos
+./engaudiostripsubs
+```
+
+### What it does
+
+For every `.mkv` file in the current directory:
+
+- Keeps only audio tracks with language set to `eng`
+- Removes all subtitle tracks
+- Preserves video streams
+- Replaces the original file with the remuxed version
+
+### Example
+
+Before:
+
+```text
+Movie.mkv
+├── Video (H.265)
+├── Audio (English)
+├── Audio (French)
+├── Subtitle (English)
+└── Subtitle (Spanish)
+```
+
+After:
+
+```text
+Movie.mkv
+├── Video (H.265)
+└── Audio (English)
+```
+
+> [!CAUTION]
+> This script modifies files in-place. Ensure you have backups or test on a small sample before processing a large library.
 
 ## Suggested workflow
 
