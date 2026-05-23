@@ -7,6 +7,8 @@ This repo contains two scripts:
 - `encode_folder` — recursively encodes video files from one folder tree into another, preserving the relative folder structure.
 - `compression_stats` — compares an original folder tree against a compressed folder tree and reports file-by-file, folder-level, and total savings.
 
+_There are others, but they are quick utility scripts that happened to be in the same folder as the main 2, use at your own risk, and your mileage may vary. I am not going to document them unless they become proper tools_
+
 ## Requirements
 
 ### Required
