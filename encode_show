@@ -22,12 +22,13 @@ SYM_ARROW="➜"
 SYM_FILM="🎬"
 SYM_FOLDER="📁"
 SYM_LOG="📋"
+SYM_INFO="ℹ️"
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 divider()    { echo -e "${DIM}$(printf '─%.0s' {1..54})${RESET}"; }
 separator()  { echo -e "${DIM}$(printf '═%.0s' {1..54})${RESET}"; }
 
-log_info()   { echo -e "  ${BLUE}${BOLD}::${RESET}  $*"; }
+log_info()   { echo -e "  ${BLUE}${BOLD}${SYM_INFO}${RESET}  $*"; }
 log_ok()     { echo -e "  ${GREEN}${BOLD}${SYM_OK}${RESET}   $*"; }
 log_skip()   { echo -e "  ${YELLOW}${BOLD}${SYM_SKIP}${RESET}   $*"; }
 log_fail()   { echo -e "  ${RED}${BOLD}${SYM_FAIL}${RESET}   $*" >&2; }
