@@ -13,6 +13,7 @@ _There are others, but they are quick utility scripts that happened to be in the
 
 ### Required
 
+- Linux (_or unix if you like to live on the edge, although it probably won't work right on unix_)
 - Bash
 - `HandBrakeCLI`
 - GNU/coreutils-style tools such as:
