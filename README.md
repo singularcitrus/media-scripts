@@ -2,7 +2,7 @@
 
 Small terminal tools for batch-encoding media with HandBrakeCLI and checking how much space you actually saved afterwards. Because apparently staring at shrinking file sizes is a valid lifestyle choice.
 
-This repo contains two scripts:
+This repo contains the following documented scripts:
 
 - `encode_folder` — recursively encodes video files from one folder tree into another, preserving the relative folder structure.
 - `compression_stats` — compares an original folder tree against a compressed folder tree and reports file-by-file, folder-level, and total savings.
